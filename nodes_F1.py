@@ -195,7 +195,7 @@ class FramePackSampler_F1:
     CATEGORY = "FramePackWrapper"
 
     def process(self, model, positive_timed_data, negative, use_teacache, teacache_rel_l1_thresh, steps, cfg,
-                guidance_scale, shift, seed, sampler, gpu_memory_preservation, image_embeds=None, start_latent=None, end_latent=None, end_image_embeds=None, embed_interpolation="linear", start_embed_strength=1.0, initial_samples=None, denoise_strength=1.0):
+                guidance_scale, shift, seed, sampler, gpu_memory_preservation, start_image_embeds=None, start_latent=None, end_latent=None, end_image_embeds=None, embed_interpolation="linear", start_embed_strength=1.0, initial_samples=None, denoise_strength=1.0):
 
         # --- Extract data from positive_timed_data --- 
         positive_timed_list = positive_timed_data["sections"]
@@ -255,8 +255,8 @@ class FramePackSampler_F1:
         has_end_image = end_latent is not None
 
         start_image_encoder_last_hidden_state = None # Initialize to None
-        if image_embeds is not None:
-            start_image_encoder_last_hidden_state = image_embeds["last_hidden_state"].to(base_dtype).to(device)
+        if start_image_embeds is not None:
+            start_image_encoder_last_hidden_state = start_image_embeds["last_hidden_state"].to(base_dtype).to(device)
 
         end_image_encoder_last_hidden_state = None # Initialize to None
         if has_end_image and embed_interpolation != "disabled" and end_image_embeds is not None:
