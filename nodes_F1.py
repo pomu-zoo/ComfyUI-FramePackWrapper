@@ -1,36 +1,21 @@
 import os
 import torch
-import torch.nn.functional as F
-import gc
-import numpy as np
 import math
-from tqdm import tqdm
 import re
 
-from accelerate import init_empty_weights
-from accelerate.utils import set_module_tensor_to_device
-
-import folder_paths
 import comfy.model_management as mm
-from comfy.utils import load_torch_file, ProgressBar, common_upscale
 import comfy.model_base
-import comfy.latent_formats
-from comfy.cli_args import args, LatentPreviewMethod
 import comfy.model_patcher
 
-from .utils import log
 from .nodes import HyVideoModel, HyVideoModelConfig # Import the classes
 
 script_directory = os.path.dirname(os.path.abspath(__file__))
 vae_scaling_factor = 0.476986
 
 from .diffusers_helper.models.hunyuan_video_packed import HunyuanVideoTransformer3DModel
-from .diffusers_helper.memory import DynamicSwapInstaller, move_model_to_device_with_memory_preservation, offload_model_from_device_for_memory_preservation
+from .diffusers_helper.memory import move_model_to_device_with_memory_preservation
 from .diffusers_helper.pipelines.k_diffusion_hunyuan import sample_hunyuan
 from .diffusers_helper.utils import crop_or_pad_yield_mask
-from .diffusers_helper.bucket_tools import find_nearest_bucket
-
-from diffusers.loaders.lora_conversion_utils import _convert_hunyuan_video_lora_to_diffusers
 
 from dataclasses import dataclass
 from typing import List, Optional, Tuple, Dict, Union # Add necessary types
@@ -284,26 +269,24 @@ class FramePackSampler_F1:
             clip_l_pooler_n = negative[0][1]["pooled_output"].to(dtype=base_dtype, device=device)
             llama_vec_n, llama_attention_mask_n = crop_or_pad_yield_mask(llama_vec_n, length=512)
         else:
-            # Need dummy tensors with correct shape and device
+            # Need dummy tensors with correct shape and device. Use shape from the first positive section.
             if positive_timed_list:
                 try:
-                    # Structure: List[Tuple[float, float, List[List[Union[torch.Tensor, Dict]]]]]
-                    first_pos_cond = positive_timed_list[0][2][0][0]
-                    first_pos_pooled = positive_timed_list[0][2][0][1]["pooled_output"]
-                    dummy_llama_vec = first_pos_cond.to(device)
-                    dummy_clip_l_pooler = first_pos_pooled.to(device)
-                    llama_vec_n = torch.zeros_like(dummy_llama_vec)
-                    clip_l_pooler_n = torch.zeros_like(dummy_clip_l_pooler)
-                    llama_vec_n_padded, llama_attention_mask_n = crop_or_pad_yield_mask(llama_vec_n, length=512)
-                    llama_vec_n = llama_vec_n_padded
+                    first_pos_cond = positive_timed_list[0][2][0][0].to(device=device)
+                    first_pos_pooled = positive_timed_list[0][2][0][1]["pooled_output"].to(device=device)
+                    llama_vec_n = torch.zeros_like(first_pos_cond)
+                    clip_l_pooler_n = torch.zeros_like(first_pos_pooled)
+                    # Still need to pad the zero tensor and get the mask
+                    llama_vec_n, llama_attention_mask_n = crop_or_pad_yield_mask(llama_vec_n, length=512)
                 except Exception as e:
-                    print(f"Error accessing positive_timed_list for negative shape: {e}. Creating fallback zero tensors.")
-                    # Fallback zero tensors if list structure is unexpected
+                    print(f"Error accessing positive_timed_list for negative shape when cfg=1.0: {e}. Creating fallback zero tensors.")
+                    # Fallback zero tensors if list structure is unexpected or empty
                     llama_vec_n = torch.zeros((B, 512, 4096), dtype=base_dtype, device=device) # Guessing shape based on llama
                     llama_attention_mask_n = torch.ones((B, 512), dtype=torch.long, device=device)
                     clip_l_pooler_n = torch.zeros((B, 1280), dtype=base_dtype, device=device) # Guessing shape based on clip-l
             else:
-                 print("Warning: positive_timed_list is empty. Cannot determine negative shape. Creating fallback zero tensors.")
+                 # This case remains the same - if no positive sections, create fallback zeros.
+                 print("Warning: positive_timed_list is empty when cfg=1.0. Cannot determine negative shape. Creating fallback zero tensors.")
                  llama_vec_n = torch.zeros((B, 512, 4096), dtype=base_dtype, device=device)
                  llama_attention_mask_n = torch.ones((B, 512), dtype=torch.long, device=device)
                  clip_l_pooler_n = torch.zeros((B, 1280), dtype=base_dtype, device=device)
