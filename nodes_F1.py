@@ -164,7 +164,6 @@ class FramePackSampler_F1:
                 "model": ("FramePackMODEL",),
                 "positive_timed_data": ("TIMED_CONDITIONING_WITH_METADATA", { "tooltip": "Output from FramePackTimestampedTextEncode. Dictionary containing sections, duration, and window size."}),
                 "negative": ("CONDITIONING",),
-                "image_embeds": ("CLIP_VISION_OUTPUT", ),
                 "steps": ("INT", {"default": 30, "min": 1}),
                 "use_teacache": ("BOOLEAN", {"default": True, "tooltip": "Use teacache for faster sampling."}),
                 "teacache_rel_l1_thresh": ("FLOAT", {"default": 0.15, "min": 0.0, "max": 1.0, "step": 0.01, "tooltip": "The threshold for the relative L1 loss."}),
@@ -180,6 +179,7 @@ class FramePackSampler_F1:
             },
             "optional": {
                 "start_latent": ("LATENT", {"tooltip": "init Latents to use for image2video"} ),
+                "start_image_embeds": ("CLIP_VISION_OUTPUT", ),
                 "end_latent": ("LATENT", {"tooltip": "end Latents to use for image2video"} ),
                 "end_image_embeds": ("CLIP_VISION_OUTPUT", {"tooltip": "end Image's clip embeds"} ),
                 "embed_interpolation": (["disabled", "weighted_average", "linear"], {"default": 'disabled', "tooltip": "Image embedding interpolation type. If linear, will smoothly interpolate with time, else it'll be weighted average with the specified weight."}),
@@ -194,8 +194,8 @@ class FramePackSampler_F1:
     FUNCTION = "process"
     CATEGORY = "FramePackWrapper"
 
-    def process(self, model, positive_timed_data, negative, use_teacache, teacache_rel_l1_thresh, image_embeds, steps, cfg,
-                guidance_scale, shift, seed, sampler, gpu_memory_preservation, start_latent=None, end_latent=None, end_image_embeds=None, embed_interpolation="linear", start_embed_strength=1.0, initial_samples=None, denoise_strength=1.0):
+    def process(self, model, positive_timed_data, negative, use_teacache, teacache_rel_l1_thresh, steps, cfg,
+                guidance_scale, shift, seed, sampler, gpu_memory_preservation, image_embeds=None, start_latent=None, end_latent=None, end_image_embeds=None, embed_interpolation="linear", start_embed_strength=1.0, initial_samples=None, denoise_strength=1.0):
 
         # --- Extract data from positive_timed_data --- 
         positive_timed_list = positive_timed_data["sections"]
@@ -254,12 +254,14 @@ class FramePackSampler_F1:
             end_latent = end_latent["samples"] * vae_scaling_factor
         has_end_image = end_latent is not None
 
-        start_image_encoder_last_hidden_state = image_embeds["last_hidden_state"].to(base_dtype).to(device)
+        start_image_encoder_last_hidden_state = None # Initialize to None
+        if image_embeds is not None:
+            start_image_encoder_last_hidden_state = image_embeds["last_hidden_state"].to(base_dtype).to(device)
 
-        if has_end_image and embed_interpolation != "disabled":
-            assert end_image_embeds is not None
+        end_image_encoder_last_hidden_state = None # Initialize to None
+        if has_end_image and embed_interpolation != "disabled" and end_image_embeds is not None:
             end_image_encoder_last_hidden_state = end_image_embeds["last_hidden_state"].to(base_dtype).to(device)
-        else:
+        elif start_image_encoder_last_hidden_state is not None: # Only create zeros if start exists
             end_image_encoder_last_hidden_state = torch.zeros_like(start_image_encoder_last_hidden_state)
 
         # --- Conditioning Setup ---
@@ -326,7 +328,11 @@ class FramePackSampler_F1:
             is_last_section = latent_padding == 0
 
             # F1 logic doesn't seem to use embed interpolation within the loop
-            image_encoder_last_hidden_state = start_image_encoder_last_hidden_state * start_embed_strength
+            # image_encoder_last_hidden_state = start_image_encoder_last_hidden_state * start_embed_strength
+            # ^-- This logic is removed as F1 doesn't use interpolation per step like the other sampler.
+            # We just pass the start_image_encoder_last_hidden_state directly to sample_hunyuan below.
+            # Handle case where image_embeds wasn't provided
+            current_image_embeds = start_image_encoder_last_hidden_state
 
             # --- Determine Current Positive Conditioning --- 
             # Calculate current time position based on the *start* of the section being generated
@@ -496,7 +502,7 @@ class FramePackSampler_F1:
                     negative_prompt_poolers=clip_l_pooler_n,
                     device=device,
                     dtype=base_dtype,
-                    image_embeddings=image_encoder_last_hidden_state,
+                    image_embeddings=current_image_embeds,
                     latent_indices=latent_indices,
                     clean_latents=clean_latents,
                     clean_latent_indices=clean_latent_indices,
