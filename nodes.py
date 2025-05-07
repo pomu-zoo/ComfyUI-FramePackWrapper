@@ -202,7 +202,7 @@ class LoadFramePackModel:
 
             "base_precision": (["fp32", "bf16", "fp16"], {"default": "bf16"}),
             "quantization": (['disabled', 'fp8_e4m3fn', 'fp8_e4m3fn_fast', 'fp8_e5m2'], {"default": 'disabled', "tooltip": "optional quantization method"}),
-            "load_device": (["main_device", "offload_device"], {"default": "cuda", "tooltip": "Initialize the model on the main device or offload device"}),
+            "load_device": (["main_device", "offload_device"], {"default": "xpu", "tooltip": "Initialize the model on the main device or offload device"}),
             },
             "optional": {
                 "attention_mode": ([
